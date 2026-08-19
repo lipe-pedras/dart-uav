@@ -1,0 +1,29 @@
+# DART-B — paper baseline: SE attention, ReLU6, no neck, GAP head, BCE + Smooth L1.
+#
+# The block *sequence* below (repconv -> inverted_res -> inverted_res -> ghost)
+# is identical across all seven presets; that shared sequence is the paper's
+# claim of a common backbone. Only attention / act / neck / head / loss differ.
+variant: dart-b
+
+model:
+  imgsz: 96
+  act: relu6
+  backbone:
+    width_mult: 1.0
+    # Tap block 2 (index 1) for a neck; the last block is always tapped.
+    tap_indices: [1]
+    blocks:
+      - {type: repconv,      out_ch: 16, stride: 2, attention: none, act: relu6}
+      - {type: inverted_res, out_ch: 32, stride: 2, attention: se,   act: relu6, expand_ratio: 4}
+      - {type: inverted_res, out_ch: 48, stride: 2, attention: se,   act: relu6, expand_ratio: 4}
+      - {type: ghost,        out_ch: 64, stride: 2, attention: none, act: relu6}
+  neck:
+    name: identity
+  head:
+    name: gap
+    num_targets: 1
+
+train:
+  loss:
+    conf: bce
+    bbox: smooth_l1

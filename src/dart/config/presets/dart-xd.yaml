@@ -1,0 +1,25 @@
+# DART-XD — DART-X with the decoupled SPP head; the paper's strongest variant.
+variant: dart-xd
+
+model:
+  imgsz: 96
+  act: silu
+  backbone:
+    width_mult: 1.0
+    # Tap block 2 (index 1) for the neck; the last block is always tapped.
+    tap_indices: [1]
+    blocks:
+      - {type: repconv,      out_ch: 16, stride: 2, attention: none, act: silu}
+      - {type: inverted_res, out_ch: 32, stride: 2, attention: coord, act: silu, expand_ratio: 4}
+      - {type: inverted_res, out_ch: 48, stride: 2, attention: coord, act: silu, expand_ratio: 4}
+      - {type: ghost,        out_ch: 64, stride: 2, attention: none, act: silu}
+  neck:
+    name: fpn_lite
+  head:
+    name: decoupled_spp
+    num_targets: 1
+
+train:
+  loss:
+    conf: focal
+    bbox: ciou

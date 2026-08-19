@@ -1,0 +1,26 @@
+# DART-B-CIoU — the loss-only ablation: byte-identical to dart-b apart
+# from the two loss lines at the bottom.
+variant: dart-b-ciou
+
+model:
+  imgsz: 96
+  act: relu6
+  backbone:
+    width_mult: 1.0
+    # Tap block 2 (index 1) for the neck; the last block is always tapped.
+    tap_indices: [1]
+    blocks:
+      - {type: repconv,      out_ch: 16, stride: 2, attention: none, act: relu6}
+      - {type: inverted_res, out_ch: 32, stride: 2, attention: se, act: relu6, expand_ratio: 4}
+      - {type: inverted_res, out_ch: 48, stride: 2, attention: se, act: relu6, expand_ratio: 4}
+      - {type: ghost,        out_ch: 64, stride: 2, attention: none, act: relu6}
+  neck:
+    name: identity
+  head:
+    name: gap
+    num_targets: 1
+
+train:
+  loss:
+    conf: focal
+    bbox: ciou

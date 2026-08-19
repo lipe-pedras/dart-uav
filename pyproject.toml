@@ -1,0 +1,78 @@
+[build-system]
+requires = ["hatchling>=1.18"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dart-uav"
+version = "0.1.0"
+description = "DART: a family of lightweight CNNs for real-time detection in resource-constrained UAV navigation"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Felipe Pedras" }]
+keywords = ["object-detection", "uav", "edge-ai", "pytorch", "onnx"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+# Floor for torch is 2.0: `torch.amp.autocast(device_type=...)` and the stable
+# `torch.onnx.export` path used by dart.export both exist from 2.0 onwards.
+# Decision 8.4 of the requirements: verified empirically, recorded here.
+dependencies = [
+    "torch>=2.0",
+    "torchvision>=0.15",
+    # The [detection] extra pulls the COCO evaluation backend that
+    # MeanAveragePrecision needs; without it mAP cannot be computed at all.
+    "torchmetrics[detection]>=1.0",
+    "supervision>=0.20",
+    "numpy>=1.22",
+    "opencv-python>=4.7",
+    "PyYAML>=6.0",
+    "typer>=0.9",
+    "huggingface-hub>=0.20",
+]
+
+[project.optional-dependencies]
+# onnxscript is what lets PyTorch 2.6+ use its Dynamo ONNX exporter; the older
+# TorchScript exporter cannot trace AdaptiveAvgPool2d over a spatially-dynamic
+# input, which the FPN-Lite neck produces.
+onnx = ["onnx>=1.14", "onnxruntime>=1.15", "onnxscript>=0.1"]
+dev = [
+    "pytest>=7.0",
+    "ruff>=0.4",
+    "onnx>=1.14",
+    "onnxruntime>=1.15",
+    "onnxscript>=0.1",
+]
+
+[project.scripts]
+dart = "dart.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/lipe-pedras/dart-uav"
+Issues = "https://github.com/lipe-pedras/dart-uav/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dart"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/dart", "tests", "README.md", "LICENSE"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+# typing.List / Optional[...] are kept deliberately: the config layer resolves
+# annotations at runtime with get_type_hints(), and PEP 585/604 forms are not
+# evaluable there on the minimum supported Python (3.9).
+ignore = ["E501", "B008", "UP006", "UP007", "UP035", "UP045"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]

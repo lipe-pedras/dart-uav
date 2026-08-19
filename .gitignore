@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+runs/
+*.onnx
+*.pt
+!src/dart/config/presets/*.yaml
+.DS_Store

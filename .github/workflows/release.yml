@@ -1,0 +1,51 @@
+# Tier 3 — release gate. Tags only.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build wheel and sdist
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+
+      - name: Install into a clean environment
+        run: |
+          python -m venv /tmp/clean
+          /tmp/clean/bin/pip install torch --index-url https://download.pytorch.org/whl/cpu
+          /tmp/clean/bin/pip install dist/*.whl
+          /tmp/clean/bin/python -c "import dart; print(dart.__version__)"
+          /tmp/clean/bin/dart variants
+
+      - name: Verify the README quickstart against the built package
+        # NFR-7: the quickstart snippet in the README must execute on every
+        # release, not just when it was written.
+        run: /tmp/clean/bin/python scripts/verify_quickstart.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build-and-verify
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

@@ -104,19 +104,25 @@ class ONNXBackend(ExportBackend):
         dummy = torch.zeros(batch, in_channels, imgsz, imgsz, device=_device_of(model))
 
         path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            torch.onnx.export(
-                model,
-                dummy,
-                str(path),
-                input_names=["images"],
-                output_names=["conf", "boxes"],
-                do_constant_folding=True,
-                **({"opset_version": opset} if opset else {}),
-                **_exporter_kwargs(dynamic_batch),
-            )
-        except Exception as exc:  # noqa: BLE001 - surfaced with context
-            raise ExportError(f"ONNX export failed: {exc}") from exc
+        last_exc: Optional[Exception] = None
+        for kwargs in _exporter_kwargs_attempts(dynamic_batch):
+            try:
+                torch.onnx.export(
+                    model,
+                    dummy,
+                    str(path),
+                    input_names=["images"],
+                    output_names=["conf", "boxes"],
+                    do_constant_folding=True,
+                    **({"opset_version": opset} if opset else {}),
+                    **kwargs,
+                )
+                last_exc = None
+                break
+            except Exception as exc:  # noqa: BLE001 - retried, then surfaced with context
+                last_exc = exc
+        if last_exc is not None:
+            raise ExportError(f"ONNX export failed: {last_exc}") from last_exc
 
         if simplify:
             _try_simplify(path)
@@ -202,8 +208,8 @@ _LEGACY_DYNAMIC_AXES = {
 }
 
 
-def _exporter_kwargs(dynamic_batch: bool) -> Dict[str, Any]:
-    """Pick the ONNX exporter available here and speak its dialect.
+def _exporter_kwargs_attempts(dynamic_batch: bool) -> List[Dict[str, Any]]:
+    """Pick the ONNX exporter dialect(s) to try, in order.
 
     PyTorch 2.6+ defaults ``torch.onnx.export`` to the Dynamo exporter, which
     needs the optional ``onnxscript`` package and declares dynamism through
@@ -214,30 +220,34 @@ def _exporter_kwargs(dynamic_batch: bool) -> Dict[str, Any]:
     The two are not interchangeable for DART: the TorchScript exporter cannot
     trace ``AdaptiveAvgPool2d`` over a spatially-dynamic input, which the
     FPN-Lite neck produces, so ``onnxscript`` is what the ``[onnx]`` extra
-    installs.
+    installs. Even so, the Dynamo exporter has shown platform-specific
+    breakage (e.g. onnxscript/torch mismatches on Windows) where it resolves
+    to ``dynamo=False`` internally despite being asked for ``dynamic_shapes``,
+    which torch itself then rejects. Rather than trust that resolution, try
+    the Dynamo dialect first and fall back to the explicit legacy dialect on
+    any failure.
     """
     import inspect
 
+    legacy = {"dynamic_axes": _LEGACY_DYNAMIC_AXES} if dynamic_batch else {}
+
     if "dynamo" not in inspect.signature(torch.onnx.export).parameters:
-        return {"dynamic_axes": _LEGACY_DYNAMIC_AXES} if dynamic_batch else {}
+        return [legacy]
 
     try:
         import onnxscript  # noqa: F401
     except ImportError:
-        return {
-            "dynamo": False,
-            **({"dynamic_axes": _LEGACY_DYNAMIC_AXES} if dynamic_batch else {}),
-        }
+        return [{"dynamo": False, **legacy}]
 
     if not dynamic_batch:
-        return {}
+        return [{}]
     # Dim.AUTO lets the exporter infer the batch dimension's bounds. Naming a
     # plain Dim instead leaves it unbounded, and the shape solver then rejects
     # the graph over guards the pooling ops generate.
     batch_dim = getattr(torch.export.Dim, "AUTO", None)
     if batch_dim is None:  # pragma: no cover - PyTorch < 2.6
         batch_dim = torch.export.Dim("batch", min=1, max=65535)
-    return {"dynamic_shapes": ({0: batch_dim},)}
+    return [{"dynamo": True, "dynamic_shapes": ({0: batch_dim},)}, {"dynamo": False, **legacy}]
 
 
 def _device_of(model: nn.Module) -> torch.device:

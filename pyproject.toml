@@ -28,7 +28,11 @@ dependencies = [
     # The [detection] extra pulls the COCO evaluation backend that
     # MeanAveragePrecision needs; without it mAP cannot be computed at all.
     "torchmetrics[detection]>=1.0",
-    "supervision>=0.20",
+    # 0.28.0-0.29.1 raise IndexError on any Pascal VOC image with zero objects
+    # (upstream regression in DetectionDataset's class-name backfill); 0.30+
+    # fixes it but drops Python 3.9 support, so a 3.9 install would otherwise
+    # resolve straight into the broken range.
+    "supervision>=0.20,!=0.28.*,!=0.29.*",
     "numpy>=1.22",
     "opencv-python>=4.7",
     "PyYAML>=6.0",

@@ -194,3 +194,64 @@ single-target task maps onto standard detection metrics:
 `EfficiencyProfiler` always measures a fused deep copy: parameters and latency
 taken from the multi-branch training graph would overstate both, and the
 caller's model must stay trainable.
+
+## Docstring style
+
+Docstrings are the source for the generated API documentation, so they are
+reStructuredText, in NumPy style, and must parse under `numpydoc`.
+
+```python
+def ciou_loss(pred: torch.Tensor, target: torch.Tensor, eps: float = 1e-7) -> torch.Tensor:
+    """
+    Compute the Complete-IoU regression loss between paired boxes.
+
+    Extended prose goes here, explaining why the thing exists.
+
+    Parameters
+    ----------
+    pred : torch.Tensor, shape (n, 4)
+        Predicted boxes as ``[cx, cy, w, h]`` in ``[0, 1]``.
+    eps : float, default: 1e-7
+        Numerical floor applied to every denominator.
+
+    Returns
+    -------
+    torch.Tensor
+        Scalar mean of ``1 - CIoU`` over the ``n`` pairs.
+    """
+```
+
+The rules, in the order they are most often got wrong:
+
+- **Opening.** Multi-line docstrings put `"""` alone on its line and the summary
+  on the next. One-liners stay on a single line. Summaries are imperative for
+  functions (`Compute…`, `Build…`), noun phrases for classes.
+- **Literals use double backticks.** There is no `conf.py` yet, so
+  `default_role` is `title-reference` and a single backtick silently renders as
+  italics instead of linking. Cross-references always name an explicit role:
+  ``:class:`~dart.engine.trainer.RunResult` ``, `:func:`, `:meth:`, `:exc:`.
+- **`See Also` will not accept a bare `~name`.** Write either a plain dotted
+  name (`FPNLiteNeck : …`) or the full role form
+  (``:class:`~dart.losses.composite.CompositeLoss` : …``). A description that
+  wraps must indent its continuation lines by four spaces. Both of these are
+  parse errors in `numpydoc`, not style preferences.
+- **Types are spelled out**, even though the signature already has them:
+  `x : int, default: 8`, `x : str or None, default: None`,
+  `x : {"largest_only", "keep_all"}` for registry names, and
+  `x : torch.Tensor, shape (B, C, H, W)` for tensors. Shape symbols are `B`
+  batch, `C` channels, `H`/`W` spatial, `N` targets per image, `n` boxes in a
+  flat set.
+- **Constructor parameters live on the class docstring**, not on `__init__` —
+  `autoclass` renders only the class docstring by default. `__init__` still
+  carries a one-line summary.
+- **Dataclasses get `Attributes`, not `Parameters`.** They are records read by
+  attribute, and autodoc documents their fields as attributes.
+- **Private helpers** always get a summary line; they get `Parameters`/`Returns`
+  only when the body is non-obvious.
+- **Never write a quoted forward slash, `os.sep`, or `os.path.join` in a
+  docstring under `src/dart`.** `tests/test_portability.py` greps raw source
+  text and will fail with a confusing "hand-built paths found" message. Say
+  "path separator", or use ``` ``a / b`` ```.
+
+Verify with `ruff check`, and with `numpydoc.docscrape.NumpyDocString` over every
+docstring — ruff does not catch malformed `See Also` entries.

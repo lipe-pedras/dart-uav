@@ -1,4 +1,5 @@
-"""Cross-cutting helpers: seeding, device selection, environment capture.
+"""
+Cross-cutting helpers: seeding, device selection, environment capture.
 
 All filesystem work in DART goes through :mod:`pathlib` (NFR-3); there is no
 string path concatenation and no hardcoded separator anywhere in the package.
@@ -18,7 +19,8 @@ import torch
 
 
 def set_seed(seed: int, deterministic: bool = True) -> None:
-    """Seed every RNG DART touches (FR-3.5).
+    """
+    Seed every RNG DART touches (FR-3.5).
 
     **Controlled:** Python's ``random``, NumPy, PyTorch CPU and CUDA,
     the DataLoader shuffling generator, and cuDNN algorithm selection when
@@ -31,10 +33,20 @@ def set_seed(seed: int, deterministic: bool = True) -> None:
     third-party ops; and the order in which multiple DataLoader workers finish,
     which does not affect results because batches are assembled by index.
 
-    Args:
-        seed: The seed.
-        deterministic: Ask cuDNN for deterministic algorithms, trading some
-            throughput for run-to-run reproducibility (NFR-2).
+    Parameters
+    ----------
+    seed : int
+        The seed. Coerced with :class:`int`, and also exported as
+        ``PYTHONHASHSEED`` so hash ordering is stable in child processes.
+    deterministic : bool, default: True
+        Ask cuDNN for deterministic algorithms, trading some throughput for
+        run-to-run reproducibility (NFR-2). Setting this to ``False`` enables
+        cuDNN benchmarking instead, which picks the fastest kernel per shape.
+
+    See Also
+    --------
+    :class:`~dart.engine.multiseed.MultiSeedRunner` : Repeats a configuration
+        across several seeds and aggregates the spread.
     """
     seed = int(seed)
     os.environ["PYTHONHASHSEED"] = str(seed)
@@ -48,11 +60,22 @@ def set_seed(seed: int, deterministic: bool = True) -> None:
 
 
 def select_device(spec: str = "auto") -> torch.device:
-    """Resolve a device string.
+    """
+    Resolve a device string to a concrete :class:`torch.device`.
 
-    Args:
-        spec: ``"auto"`` (CUDA when available, else MPS, else CPU), ``"cpu"``,
-            ``"cuda"``, ``"cuda:1"``, or ``"mps"``.
+    Parameters
+    ----------
+    spec : str, default: "auto"
+        ``"auto"`` (CUDA when available, else MPS, else CPU), ``"cpu"``,
+        ``"cuda"``, ``"cuda:1"``, or ``"mps"``. Case-insensitive; the empty
+        string is treated as ``"auto"``.
+
+    Returns
+    -------
+    torch.device
+        The resolved device. Anything other than ``"auto"`` is passed straight
+        to :class:`torch.device`, so an unavailable but well-formed device is
+        returned here and fails later at the point of use.
     """
     spec = str(spec).lower()
     if spec in ("auto", ""):
@@ -65,7 +88,25 @@ def select_device(spec: str = "auto") -> torch.device:
 
 
 def environment_record() -> Dict[str, Any]:
-    """Capture what is needed to explain a metric discrepancy (FR-7.1)."""
+    """
+    Capture what is needed to explain a metric discrepancy (FR-7.1).
+
+    Returns
+    -------
+    dict of str to Any
+        Interpreter, platform and hardware identification, the versions of
+        ``dart`` itself and of every dependency whose behaviour can move a
+        metric, and the CUDA and cuDNN versions. Any package that is not
+        installed maps to ``None`` rather than being omitted, so two records
+        always have the same keys and can be compared field by field. A
+        ``gpus`` key listing device names is present only when CUDA is
+        available.
+
+    See Also
+    --------
+    :class:`~dart.engine.recorder.RunRecorder` : Writes this record into each
+        run directory.
+    """
     record: Dict[str, Any] = {
         "dart_version": _package_version(),
         "python": sys.version.split()[0],
@@ -88,10 +129,32 @@ def environment_record() -> Dict[str, Any]:
 
 
 def unique_dir(base: Path, name: str) -> Path:
-    """Return ``base/name``, suffixed with ``2``, ``3``, ... if it is taken.
+    """
+    Return a directory under ``base`` that does not exist yet.
 
     Runs are never silently overwritten: a re-run of the same command produces
     ``exp2`` beside ``exp``, so the earlier run's metrics survive.
+
+    Parameters
+    ----------
+    base : ~pathlib.Path
+        Parent directory. Not created; only its children are tested for
+        existence.
+    name : str
+        Preferred directory name. Used unchanged when available, otherwise
+        suffixed with ``2``, ``3``, and so on until a free name is found.
+
+    Returns
+    -------
+    ~pathlib.Path
+        The first free path, composed with :class:`~pathlib.Path` rather than
+        by string concatenation.
+
+    Notes
+    -----
+    The check is not atomic: two processes racing on the same ``base`` can
+    settle on the same name. DART runs one experiment per process, so this is
+    not guarded against.
     """
     base = Path(base)
     candidate = base / name
@@ -103,6 +166,16 @@ def unique_dir(base: Path, name: str) -> Path:
 
 
 def _package_version() -> Optional[str]:
+    """
+    Return the installed ``dart-uav`` version, or ``None``.
+
+    Returns
+    -------
+    str or None
+        ``None`` when the package is not installed — which is the normal case
+        for a source checkout run without ``pip install`` — so an environment
+        record can still be written.
+    """
     try:
         from importlib.metadata import PackageNotFoundError, version
 
@@ -115,6 +188,22 @@ def _package_version() -> Optional[str]:
 
 
 def _module_version(name: str) -> Optional[str]:
+    """
+    Return an importable module's ``__version__``, or ``None``.
+
+    Parameters
+    ----------
+    name : str
+        Import name of the module, not its distribution name — ``"cv2"``, not
+        ``"opencv-python"``.
+
+    Returns
+    -------
+    str or None
+        ``None`` if the module is not installed or does not define
+        ``__version__``. The two cases are deliberately not distinguished:
+        either way the version is unknown.
+    """
     try:
         module = __import__(name)
     except ImportError:

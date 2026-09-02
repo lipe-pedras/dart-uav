@@ -1,7 +1,14 @@
-"""Feature-fusion necks.
+"""
+Feature-fusion necks.
 
 ``identity`` is a null object rather than ``None``, so the detector's forward
 pass has no branch on neck presence (UML design §5.1).
+
+A neck consumes the list of tapped backbone feature maps and returns a single
+map for the head. Every neck exposes ``out_channels`` after construction, which
+is how the head learns its input width without the detector hardcoding it.
+
+Shape symbols: ``B`` batch, ``C`` channels, ``H`` and ``W`` spatial.
 """
 
 from __future__ import annotations
@@ -17,23 +24,58 @@ from .registry import COMPONENTS, register_component
 
 @register_component("neck", "identity")
 class IdentityNeck(nn.Module):
-    """Pass the deepest feature map through untouched.
+    """
+    Pass the deepest feature map through untouched.
 
-    Args:
-        in_channels: Channel counts of the tapped feature maps, in tap order.
+    The null object of the neck axis: it exists so a variant configured without
+    fusion still has a neck to call, keeping
+    :meth:`~dart.models.detector.DARTDetector.forward` branch-free.
+
+    Parameters
+    ----------
+    in_channels : sequence of int
+        Channel counts of the tapped feature maps, in tap order. Only the last
+        is used.
+    **_ : object
+        Accepted and ignored, so a config carrying neck options written for
+        another neck still builds this one.
+
+    Attributes
+    ----------
+    out_channels : int
+        Channels of the returned map — the deepest tap's, unchanged.
+
+    See Also
+    --------
+    FPNLiteNeck : The fusing alternative.
     """
 
     def __init__(self, in_channels: Sequence[int], **_: object) -> None:
+        """Record the deepest tap's channel count as the output width."""
         super().__init__()
         self.out_channels = in_channels[-1]
 
     def forward(self, features: List[torch.Tensor]) -> torch.Tensor:
+        """
+        Select the deepest tapped feature map.
+
+        Parameters
+        ----------
+        features : list of torch.Tensor
+            Tapped feature maps in tap order, each of shape ``(B, C, H, W)``.
+
+        Returns
+        -------
+        torch.Tensor, shape (B, C, H, W)
+            The last element of ``features``, returned as-is.
+        """
         return features[-1]
 
 
 @register_component("neck", "fpn_lite")
 class FPNLiteNeck(nn.Module):
-    """Lightweight FPN fusing an early, high-resolution tap with the deepest one.
+    """
+    Lightweight FPN fusing an early, high-resolution tap with the deepest one.
 
     The deepest map is reduced, upsampled to the early tap's resolution, added
     to the reduced early map, merged by a 3x3 conv, and pooled to a fixed grid
@@ -41,11 +83,38 @@ class FPNLiteNeck(nn.Module):
     :meth:`~dart.models.backbone.Backbone.tap_indices`, not hardcoded here, so
     a six-block backbone can feed the same neck from positions 3 and 6.
 
-    Args:
-        in_channels: Channel counts of the tapped feature maps, in tap order.
-            The first and last taps are fused.
-        out_channels: Channels of the fused map; defaults to the deepest tap's.
-        pool_size: Spatial size the fused map is pooled to before the head.
+    Parameters
+    ----------
+    in_channels : sequence of int
+        Channel counts of the tapped feature maps, in tap order. The first and
+        last taps are fused; any in between are ignored. At least two are
+        required.
+    out_channels : int or None, default: None
+        Channels of the fused map. ``None`` adopts the deepest tap's width.
+    pool_size : int, default: 6
+        Spatial size the fused map is pooled to before the head, making the
+        head's input size independent of the input resolution.
+
+    Attributes
+    ----------
+    out_channels : int
+        Channels of the fused map, resolved from the ``out_channels`` argument.
+
+    Raises
+    ------
+    ValueError
+        If fewer than two feature maps are tapped. The message names the
+        ``backbone.tap_indices`` key that fixes it.
+
+    See Also
+    --------
+    IdentityNeck : The non-fusing alternative.
+
+    References
+    ----------
+    .. [1] T.-Y. Lin, P. Dollar, R. Girshick, K. He, B. Hariharan and
+           S. Belongie, "Feature Pyramid Networks for Object Detection",
+           CVPR 2017.
     """
 
     def __init__(
@@ -54,6 +123,7 @@ class FPNLiteNeck(nn.Module):
         out_channels: int | None = None,
         pool_size: int = 6,
     ) -> None:
+        """Build the lateral, reduction, merge and pooling stages."""
         super().__init__()
         if len(in_channels) < 2:
             raise ValueError(
@@ -83,6 +153,21 @@ class FPNLiteNeck(nn.Module):
         self.downsample = nn.AdaptiveAvgPool2d(pool_size)
 
     def forward(self, features: List[torch.Tensor]) -> torch.Tensor:
+        """
+        Fuse the earliest and deepest tapped maps into one pooled map.
+
+        Parameters
+        ----------
+        features : list of torch.Tensor
+            Tapped feature maps in tap order, each of shape ``(B, C, H, W)``.
+            Only the first and last are read, and their channel counts must
+            match the ``in_channels`` the neck was built with.
+
+        Returns
+        -------
+        torch.Tensor, shape (B, out_channels, pool_size, pool_size)
+            The fused map, pooled to the fixed grid the head expects.
+        """
         early, deep = features[0], features[-1]
         lateral = F.interpolate(self.lateral(deep), size=early.shape[2:], mode="nearest")
         merged = self.merge(lateral + self.reduce(early))
@@ -90,5 +175,28 @@ class FPNLiteNeck(nn.Module):
 
 
 def build_neck(name: str, in_channels: Sequence[int], **kwargs) -> nn.Module:
-    """Build a neck by registered name."""
+    """
+    Build a neck by registered name.
+
+    Parameters
+    ----------
+    name : {"identity", "fpn_lite"}
+        Registered neck name. Any name added through
+        :func:`~dart.models.registry.register_component` also works.
+    in_channels : sequence of int
+        Channel counts of the tapped feature maps, in tap order.
+    **kwargs
+        Neck-specific options, forwarded to the constructor — for example
+        ``out_channels`` and ``pool_size`` for :class:`FPNLiteNeck`.
+
+    Returns
+    -------
+    torch.nn.Module
+        The constructed neck, exposing ``out_channels``.
+
+    Raises
+    ------
+    ~dart.errors.RegistryError
+        If ``name`` is not registered.
+    """
     return COMPONENTS.build("neck", name, in_channels=list(in_channels), **kwargs)
